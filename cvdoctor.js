@@ -18,7 +18,7 @@
  *   - 同意前はイベントをバッファに溜め、analytics同意後にのみ送信
  *
  * ライセンス: MIT (c) 2026 Rivership
- * ソース: https://github.com/ryo-kawafune/cvdoctor-sdk
+ * ソース: https://github.com/rivership-org/cvdoctor-sdk
  *   何を送っていて何を送っていないかは、このコードで検証できます。
  */
 (function () {

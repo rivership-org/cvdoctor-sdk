@@ -1,0 +1,15 @@
+
+# 🔴 2026-09-09 追加: 平文シークレットを追跡しないための共通テンプレ
+#    （足しただけで既存行は消していない。詳細＝personal/simple-tasks/tools/secret_scan.py）
+.env
+.env.*
+!.env.example
+token*.json
+client_secret*.json
+auth_state*.json
+*.p8
+*.pem
+*.key
+*.bak
+*.bak_*
+.DS_Store

@@ -348,7 +348,8 @@
   }
 
   // ─── A/B variant 適用（FOUC回避のため早期実行） ───────────
-  // /api/sdk/site-tests から稼働中SiteTestを取得し、visitorId基準で安定割当。
+  // /api/sdk/site-tests から稼働中SiteTest（判定後に勝者を100%で配信中のものを含む）を取得し、visitorId基準で安定割当。
+  // 保存済みの割り当てIDが返却に無いとき（勝者配信中に敗者IDが残っている等）は無視して再割当する。
   function hashStr(s) {
     var h = 0;
     for (var i = 0; i < s.length; i++) {
@@ -480,6 +481,9 @@
           if (!variant) return;
           var changes = variant.changes || [];
           for (var i = 0; i < changes.length; i++) applyChange(changes[i]);
+          // 判定後に勝者を 100% で配信しているテスト（servingWinner）は比較ではないので、
+          // 表示を記録しない（完了したテストの数字を動かさない・イベント数を増やさない）。
+          if (test.servingWinner === true) return;
           // 表示記録（同意ゲートを通す）
           track({
             type: "impression",

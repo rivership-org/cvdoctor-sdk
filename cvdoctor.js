@@ -176,9 +176,22 @@
   // ─── URL 正規化（プライバシー） ───────────────────────────
   // フラグメント(#...)は OAuth implicit の access_token 等の秘匿情報が
   // 乗ることがあるため送信前に必ず除去し、長さも制限する。
+  // クエリも、確認メール・配信停止・OAuth 戻り等のトークン類は落とす
+  // （pageUrl は PageEvent に保存されるため。utm_* 等の計測用は残す）。
+  var SENSITIVE_PARAM = /^(token|access_token|id_token|refresh_token|code|state|password|pass|pwd|secret|signature|sig|auth|authorization|api_key|apikey|key|session|session_id|sessionid|otp)$/i;
   function safeHref() {
     try {
-      return String(location.href).split("#")[0].slice(0, 2048);
+      var raw = String(location.href).split("#")[0];
+      try {
+        var u = new URL(raw);
+        var drop = [];
+        u.searchParams.forEach(function (_v, k) {
+          if (SENSITIVE_PARAM.test(k)) drop.push(k);
+        });
+        for (var i = 0; i < drop.length; i++) u.searchParams.delete(drop[i]);
+        raw = u.toString();
+      } catch (e2) {}
+      return raw.slice(0, 2048);
     } catch (e) {
       return "";
     }

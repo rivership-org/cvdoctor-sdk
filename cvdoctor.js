@@ -8,6 +8,8 @@
  * グローバルAPI:
  *   window.cvdoctor.init(config)      … 任意の上書き設定
  *   window.cvdoctor.track(event)      … 任意イベント送信 {type:'impression'|'click'|'conversion', ...}
+ *                                       conversion は、このページで割り当て済みの A/B テストにも
+ *                                       1訪問者1テスト1回だけ計上する（localStorage cvdoctor_stc_<testId>）
  *   window.cvdoctor.setConsent(bool)  … 外部同意UI連携（data-consent="external"時）
  *   ※ identify は提供しない（PII回避のため）
  *
@@ -251,6 +253,47 @@
   function track(evt) {
     if (!evt || !evt.type) return;
     enqueueOrSend({ fn: sendEvent, data: evt });
+    // conversion は A/B の集計（SiteTestVariant.conversions）にも計上する。
+    // フォーム送信・window.cvdoctor.track({type:'conversion'}) のどちらからでも同じ経路。
+    if (normalizeEventType(evt.type) === "conversion") {
+      enqueueOrSend({ fn: sendAbConversions, data: null });
+    }
+  }
+
+  // ─── A/B コンバージョン（1訪問者・1テスト・1回） ────────────────
+  // このページで割り当て済みの RUNNING テスト（applyVariants が埋める）。
+  // 勝者を 100% で配信中（servingWinner）のテストは比較が終わっているので含めない。
+  var activeTests = [];
+  var activeTestsLoaded = false;
+  // 同意直後は flushBuffer → applyVariants の順なので、バッファにあった conversion が
+  // テスト取得より先に来る。その場合はここに保留し、取得完了後に送る。
+  var pendingAbConversion = false;
+  var STC_PREFIX = "cvdoctor_stc_";
+
+  function sendAbConversions() {
+    if (!hasConsent()) return;
+    if (!activeTestsLoaded) {
+      pendingAbConversion = true;
+      return;
+    }
+    for (var i = 0; i < activeTests.length; i++) {
+      var t = activeTests[i];
+      var key = STC_PREFIX + t.testId;
+      // 冪等: 同じ訪問者が同じテストで何度送信しても CV は 1 回だけ数える
+      if (storeGet(key)) continue;
+      storeSet(key, t.variantId);
+      postBeacon("/api/sdk/site-test-events", {
+        testId: t.testId,
+        variantId: t.variantId,
+        type: "conversion",
+      });
+    }
+  }
+
+  // リード品質の帰属先（/api/leads の siteTestId / variantId）。
+  // LeadEvent は 1 テストにしか紐付かないので、このページの最初の RUNNING テストに付ける。
+  function leadAttribution() {
+    return activeTests.length > 0 ? activeTests[0] : null;
   }
 
   // ─── バッファフラッシュ ───────────────────────────────────
@@ -488,7 +531,11 @@
     fetch(url, { mode: "cors" })
       .then(function (r) { return r.json(); })
       .then(function (tests) {
-        if (!Array.isArray(tests)) return;
+        if (!Array.isArray(tests)) {
+          activeTestsLoaded = true;
+          pendingAbConversion = false;
+          return;
+        }
         tests.forEach(function (test) {
           var variant = pickVariant(test);
           if (!variant) return;
@@ -497,6 +544,8 @@
           // 判定後に勝者を 100% で配信しているテスト（servingWinner）は比較ではないので、
           // 表示を記録しない（完了したテストの数字を動かさない・イベント数を増やさない）。
           if (test.servingWinner === true) return;
+          // 以後の conversion / リード品質の帰属先として保持（RUNNING のみ）
+          activeTests.push({ testId: test.id, variantId: variant.id });
           // 表示記録（同意ゲートを通す）
           track({
             type: "impression",
@@ -511,8 +560,18 @@
             });
           }
         });
+        activeTestsLoaded = true;
+        // 取得前に来ていた conversion（同意直後のバッファ等）をここで送る
+        if (pendingAbConversion) {
+          pendingAbConversion = false;
+          sendAbConversions();
+        }
       })
-      .catch(function () {});
+      .catch(function () {
+        // 取得失敗でも「テスト無し」として確定させる（保留した conversion を抱えたままにしない）
+        activeTestsLoaded = true;
+        pendingAbConversion = false;
+      });
     } catch (e) {}
   }
 
@@ -717,6 +776,13 @@
         interactionMs: interactionMs,
       },
     };
+    // A/B のバリアント別リード品質（Growth）: このページで割り当て済みのテストに帰属させる。
+    // ID だけで PII ではない。サーバ側で organization との整合を検証してから保存する。
+    var attribution = leadAttribution();
+    if (attribution) {
+      payload.siteTestId = attribution.testId;
+      payload.variantId = attribution.variantId;
+    }
     postBeacon("/api/leads", payload);
 
     // フォーム送信=コンバージョン扱いで計測（同意ゲート経由）
